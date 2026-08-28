@@ -35,5 +35,11 @@
     <ClInclude Include="loading.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="animalgrowth.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drawlevel2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
