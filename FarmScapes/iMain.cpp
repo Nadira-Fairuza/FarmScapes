@@ -4,6 +4,7 @@
 #include "bitmap_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <mmsystem.h>
 
 #pragma comment(lib, "winmm.lib")
@@ -23,6 +24,7 @@
 #define STATE_CREDITS 3
 #define STATE_LOADING 4
 #define STATE_TOWN 5
+#define STATE_LEVEL_2 6
 
 int gameState = STATE_MENU;
 int loadingTimer = 0;
@@ -44,9 +46,25 @@ int level2Unlocked = 0, level3Unlocked = 0;
 #include "loading.h"
 #include "updatecropgrowth.h"
 #include "drawlevel1.h"
+#include "animalgrowth.h"  // Included first so MAX_ANIMALS_PER_TYPE is defined
+#include "drawlevel2.h"
 #include "drawTown.h"
 
 int playerGold = 0;
+
+// --- ANIMAL STATE VARIABLES FOR LEVEL 2 ---
+int henCount = 0, cowCount = 0, sheepCount = 0;
+struct Animal hens[MAX_ANIMALS_PER_TYPE];
+struct Animal cows[MAX_ANIMALS_PER_TYPE];
+struct Animal sheep[MAX_ANIMALS_PER_TYPE];
+
+int countFeed = 5;
+int countEgg = 0, countMilk = 0, countWool = 0;
+int feedBuyPrice = 5;
+int eggSellPrice = 15, milkSellPrice = 30, woolSellPrice = 45;
+int henBuyPrice = 30, cowBuyPrice = 100, sheepBuyPrice = 70;
+int selectedRanchTool = 1; // 1 = Feed, 2 = Collect
+int isRanchMarketOpen = 0;
 
 // CROP PRICES (MAX PROFIT = $5 EACH)
 int riceBuyPrice = 5, riceSellPrice = 10;
@@ -92,6 +110,7 @@ void iDraw() {
 	else if (gameState == STATE_LOADING) drawLoading();
 	else if (gameState == STATE_TOWN) drawTown();
 	else if (gameState == STATE_LEVEL_1) drawLevel1();
+	else if (gameState == STATE_LEVEL_2) drawLevel2();
 	else if (gameState == STATE_SETTINGS) drawSettings();
 	else if (gameState == STATE_CREDITS) drawCredits();
 }
@@ -130,7 +149,7 @@ void iMouse(int button, int state, int mx, int my) {
 				return;
 			}
 		}
-		// 4. LEVEL 1 STATE
+		// 4. LEVEL 1 STATE (Completely untouched behavior)
 		else if (gameState == STATE_LEVEL_1) {
 			if (showCapWarning) {
 				showCapWarning = 0;
@@ -313,6 +332,108 @@ void iMouse(int button, int state, int mx, int my) {
 				}
 			}
 		}
+
+		// 5. LEVEL 2 STATE (Ranch Mouse Controls)
+		else if (gameState == STATE_LEVEL_2) {
+			// Market Button
+			if (mx >= 430 && mx <= 530 && my >= 552 && my <= 586) {
+				isRanchMarketOpen = !isRanchMarketOpen;
+				return;
+			}
+			// Back to Town Button
+			else if (mx >= 545 && mx <= 655 && my >= 552 && my <= 586) {
+				gameState = STATE_TOWN;
+				return;
+			}
+			// Menu Button
+			else if (mx >= 670 && mx <= 780 && my >= 552 && my <= 586) {
+				gameState = STATE_MENU;
+				return;
+			}
+
+			// Ranch Market Overlay Interactions
+			if (isRanchMarketOpen) {
+				if (mx >= 600 && mx <= 680 && my >= 90 && my <= 120) {
+					isRanchMarketOpen = 0;
+					return;
+				}
+				// Sell Produce
+				if (mx >= 320 && mx <= 385 && my >= 395 && my <= 417 && countEgg > 0) {
+					countEgg--; playerGold += eggSellPrice;
+				}
+				else if (mx >= 320 && mx <= 385 && my >= 345 && my <= 367 && countMilk > 0) {
+					countMilk--; playerGold += milkSellPrice;
+				}
+				else if (mx >= 320 && mx <= 385 && my >= 295 && my <= 317 && countWool > 0) {
+					countWool--; playerGold += woolSellPrice;
+				}
+				// Buy Feed & Animals
+				else if (mx >= 610 && mx <= 675 && my >= 395 && my <= 417 && playerGold >= feedBuyPrice) {
+					playerGold -= feedBuyPrice; countFeed++;
+				}
+				else if (mx >= 610 && mx <= 675 && my >= 345 && my <= 367 && playerGold >= henBuyPrice) {
+					for (int i = 0; i < MAX_ANIMALS_PER_TYPE; i++) {
+						if (!hens[i].isAlive) { playerGold -= henBuyPrice; hens[i].isAlive = 1; henCount = (i + 1 > henCount) ? i + 1 : henCount; break; }
+					}
+				}
+				else if (mx >= 610 && mx <= 675 && my >= 295 && my <= 317 && playerGold >= cowBuyPrice) {
+					for (int i = 0; i < MAX_ANIMALS_PER_TYPE; i++) {
+						if (!cows[i].isAlive) { playerGold -= cowBuyPrice; cows[i].isAlive = 1; cowCount = (i + 1 > cowCount) ? i + 1 : cowCount; break; }
+					}
+				}
+				else if (mx >= 610 && mx <= 675 && my >= 245 && my <= 267 && playerGold >= sheepBuyPrice) {
+					for (int i = 0; i < MAX_ANIMALS_PER_TYPE; i++) {
+						if (!sheep[i].isAlive) { playerGold -= sheepBuyPrice; sheep[i].isAlive = 1; sheepCount = (i + 1 > sheepCount) ? i + 1 : sheepCount; break; }
+					}
+				}
+				return;
+			}
+
+			// Toolbar Selection (Feed / Collect)
+			if (my >= 28 && my <= 72) {
+				if (mx >= 270 && mx <= 390) selectedRanchTool = 1; // Feed Tool
+				if (mx >= 410 && mx <= 530) selectedRanchTool = 2; // Collect Tool
+				return;
+			}
+
+			// Animal Click Interactions (Feeding & Collecting)
+			for (int i = 0; i < henCount; i++) {
+				if (hens[i].isAlive && mx >= hens[i].x && mx <= hens[i].x + 48 && my >= hens[i].y && my <= hens[i].y + 48) {
+					if (selectedRanchTool == 1 && countFeed > 0 && hens[i].fedState == 0) {
+						countFeed--;
+						hens[i].fedState = 1;
+					}
+					else if (selectedRanchTool == 2 && hens[i].hasProduce) {
+						hens[i].hasProduce = 0;
+						countEgg++;
+					}
+				}
+			}
+			for (int i = 0; i < cowCount; i++) {
+				if (cows[i].isAlive && mx >= cows[i].x && mx <= cows[i].x + 48 && my >= cows[i].y && my <= cows[i].y + 48) {
+					if (selectedRanchTool == 1 && countFeed > 0 && cows[i].fedState == 0) {
+						countFeed--;
+						cows[i].fedState = 1;
+					}
+					else if (selectedRanchTool == 2 && cows[i].hasProduce) {
+						cows[i].hasProduce = 0;
+						countMilk++;
+					}
+				}
+			}
+			for (int i = 0; i < sheepCount; i++) {
+				if (sheep[i].isAlive && mx >= sheep[i].x && mx <= sheep[i].x + 48 && my >= sheep[i].y && my <= sheep[i].y + 48) {
+					if (selectedRanchTool == 1 && countFeed > 0 && sheep[i].fedState == 0) {
+						countFeed--;
+						sheep[i].fedState = 1;
+					}
+					else if (selectedRanchTool == 2 && sheep[i].hasProduce) {
+						sheep[i].hasProduce = 0;
+						countWool++;
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -322,34 +443,34 @@ void iPassiveMouseMove(int mx, int my) {}
 // --- CONTINUOUS GAME LOOP (Runs every frame via SetTimer) ---
 void fixedUpdate() {
 	// 1. WASD & Arrow Keys Movement
-	if ((gameState == STATE_TOWN && !showDialogue) || gameState == STATE_LEVEL_1) {
+	if ((gameState == STATE_TOWN && !showDialogue) || gameState == STATE_LEVEL_1 || gameState == STATE_LEVEL_2) {
 
 		// UP (W or Up Arrow)
 		if (isKeyPressed('w') || isKeyPressed('W') || isSpecialKeyPressed(GLUT_KEY_UP)) {
-			if (gameState == STATE_LEVEL_1 || (canWalk(playerX, playerY + playerSpeed) && isWithinBounds(playerX, playerY + playerSpeed))) {
+			if (gameState == STATE_LEVEL_1 || gameState == STATE_LEVEL_2 || (canWalk(playerX, playerY + playerSpeed) && isWithinBounds(playerX, playerY + playerSpeed))) {
 				playerY += playerSpeed;
 			}
 		}
 		// DOWN (S or Down Arrow)
 		if (isKeyPressed('s') || isKeyPressed('S') || isSpecialKeyPressed(GLUT_KEY_DOWN)) {
-			if (gameState == STATE_LEVEL_1 || (canWalk(playerX, playerY - playerSpeed) && isWithinBounds(playerX, playerY - playerSpeed))) {
+			if (gameState == STATE_LEVEL_1 || gameState == STATE_LEVEL_2 || (canWalk(playerX, playerY - playerSpeed) && isWithinBounds(playerX, playerY - playerSpeed))) {
 				playerY -= playerSpeed;
 			}
 		}
 		// LEFT (A or Left Arrow)
 		if (isKeyPressed('a') || isKeyPressed('A') || isSpecialKeyPressed(GLUT_KEY_LEFT)) {
-			if (gameState == STATE_LEVEL_1 || (canWalk(playerX - playerSpeed, playerY) && isWithinBounds(playerX - playerSpeed, playerY))) {
+			if (gameState == STATE_LEVEL_1 || gameState == STATE_LEVEL_2 || (canWalk(playerX - playerSpeed, playerY) && isWithinBounds(playerX - playerSpeed, playerY))) {
 				playerX -= playerSpeed;
 			}
 		}
 		// RIGHT (D or Right Arrow)
 		if (isKeyPressed('d') || isKeyPressed('D') || isSpecialKeyPressed(GLUT_KEY_RIGHT)) {
-			if (gameState == STATE_LEVEL_1 || (canWalk(playerX + playerSpeed, playerY) && isWithinBounds(playerX + playerSpeed, playerY))) {
+			if (gameState == STATE_LEVEL_1 || gameState == STATE_LEVEL_2 || (canWalk(playerX + playerSpeed, playerY) && isWithinBounds(playerX + playerSpeed, playerY))) {
 				playerX += playerSpeed;
 			}
 		}
 	}
-	// --- DIALOGUE TRIGGER (Bypasses GLUT iKeyboard completely) ---
+	// --- DIALOGUE TRIGGER ---
 	if (gameState == STATE_TOWN) {
 		int eIsDown = isKeyPressed('e') || isKeyPressed('E');
 
@@ -360,7 +481,10 @@ void fixedUpdate() {
 			if (showDialogue) {
 				showDialogue = 0;
 				if (strcmp(npcName, "Nadira") == 0) {
-					gameState = STATE_LEVEL_1; // Transition to Level 1
+					gameState = STATE_LEVEL_1;
+				}
+				else if (strcmp(npcName, "Ragib") == 0 && level2Unlocked) {
+					gameState = STATE_LEVEL_2;
 				}
 			}
 			// 2. Open Nadira Dialogue
@@ -369,10 +493,16 @@ void fixedUpdate() {
 				strcpy(dialogueText, "Welcome to the Farm! Press E again to enter Level 1.");
 				showDialogue = 1;
 			}
-			// 3. Open Ragib Dialogue
+			// 3. Open Ragib Dialogue (Temporarily changed limit to 100 gold for testing)
 			else if (playerX >= 450 && playerX <= 680 && playerY >= 210 && playerY <= 310) {
 				strcpy(npcName, "Ragib");
-				strcpy(dialogueText, level2Unlocked ? "Entering Ranch..." : "Welcome to the Ranch! Clear Level 1 first.");
+				if (playerGold >= 100) {
+					level2Unlocked = 1;
+					strcpy(dialogueText, "You have 100 gold! Press E again to enter Level 2.");
+				}
+				else {
+					strcpy(dialogueText, "Welcome to the Ranch! Earn 100 gold in Level 1 first.");
+				}
 				showDialogue = 1;
 			}
 			// 4. Open Anika Dialogue
@@ -383,38 +513,40 @@ void fixedUpdate() {
 			}
 		}
 
-		// Save state for next frame debounce
 		eKeyPressedLastFrame = eIsDown;
 	}
 }
 
-// Keep these blank or handle single-press toggles here (like 'E' to talk)
 void iKeyboard(unsigned char key) {
 	if (gameState == STATE_TOWN) {
 		if (key == 'e' || key == 'E') {
-
-			// 1. Close dialogue if already open
 			if (showDialogue) {
 				showDialogue = 0;
 				if (strcmp(npcName, "Nadira") == 0) {
-					gameState = STATE_LEVEL_1; // Transition to Level 1
+					gameState = STATE_LEVEL_1;
+				}
+				else if (strcmp(npcName, "Ragib") == 0 && level2Unlocked) {
+					gameState = STATE_LEVEL_2;
 				}
 				return;
 			}
 
-			// 2. Open Nadira Dialogue
 			if (playerX >= 480 && playerX <= 700 && playerY >= 320 && playerY <= 460) {
 				sprintf(npcName, "Nadira");
 				sprintf(dialogueText, "Welcome to the Cropland! Press E again to start farming.");
 				showDialogue = 1;
 			}
-			// 3. Open Ragib Dialogue
 			else if (playerX >= 450 && playerX <= 680 && playerY >= 210 && playerY <= 310) {
 				sprintf(npcName, "Ragib");
-				sprintf(dialogueText, level2Unlocked ? "Entering Ranch..." : "Welcome to the Ranch! Clear Level 1 first.");
+				if (playerGold >= 100) {
+					level2Unlocked = 1;
+					sprintf(dialogueText, "You have 100 gold! Press E again to enter Level 2.");
+				}
+				else {
+					sprintf(dialogueText, "Welcome to the Ranch! Earn 100 gold in Level 1 first.");
+				}
 				showDialogue = 1;
 			}
-			// 4. Open Anika Dialogue
 			else if (playerX >= 450 && playerX <= 680 && playerY >= 100 && playerY <= 200) {
 				sprintf(npcName, "Anika");
 				sprintf(dialogueText, level3Unlocked ? "Entering Fishery..." : "Welcome to the Fishery! Clear Level 2 first.");
@@ -431,31 +563,32 @@ void updateSeasonTimer() {
 		seasonTimer--;
 	}
 	else {
-		currentSeason = (currentSeason + 1) % 3; // Rotates between 0, 1, and 2
-		seasonTimer = 40;                       // Reset back to 40 second
+		currentSeason = (currentSeason + 1) % 3;
+		seasonTimer = 40;
 	}
 }
-// --- NEW LOADING SCREEN ANIMATION CALLBACK ---
+
 void updateLoading() {
 	if (gameState == STATE_LOADING) {
-		loadingTimer += 2; // Increments smoothly every 50ms
+		loadingTimer += 2;
 
 		if (loadingTimer >= 100) {
-			gameState = STATE_LEVEL_1; // Transition to Level 1
+			gameState = STATE_LEVEL_1;
 			loadingTimer = 0;
 		}
 	}
 }
-void iAnim() {
-	// Empty function used strictly to force GLUT to process keyboard input frames
-}
+
+void iAnim() {}
+
 int main() {
 	initFarmGrid();
+	initLevel2();
 	initAudio();
 
 	iSetTimer(1000, updateCropGrowth);
+	iSetTimer(1000, updateAnimalGrowth);
 	iSetTimer(1000, updateSeasonTimer);
-
 	iSetTimer(50, updateLoading);
 	iSetTimer(20, iAnim);
 
